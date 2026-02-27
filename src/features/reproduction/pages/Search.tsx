@@ -46,10 +46,10 @@ export default function Search() {
         .then(resposne => resposne.json())
         .then(data => { return data.artists.items[0].id})
 
-        console.log("Artist ID" , + artistID);
+        console.log("Artist ID" + artistID);
 
         //Receba uma solicitação com o ID do artista e baixe todos os álbuns desse artista.
-        var returnedAlbums = await fetch('https://api.spotify.com/v1/artists/' + artistID + '/albums?include_groups=album&market=from_token&limit=20', searchParameters)
+        var returnedAlbums = await fetch('https://api.spotify.com/v1/artists/' + artistID + '/albums?include_groups=album&market=BR&limit=20', searchParameters)
         .then(response => response.json())
         .then(data =>{
             console.log(data);
