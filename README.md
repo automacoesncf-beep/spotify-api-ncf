@@ -24,3 +24,10 @@ Layout (flex, grid, width)
 Espaçamento (p, m, gap, space-y)
 Visual (bg, border, rounded, shadow)
 Texto (text, font, leading)
+
+
+cd C:\Users\ederz\Desktop\SPOTIFY\spotify-api-ncf\spotify-token
+>> npm install
+>> $env:SPOTIFY_CLIENT_ID="15ac21bfd8844362a70cb1c18c006817"
+>> $env:SPOTIFY_CLIENT_SECRET="0c35325e43274934a9635c0a7a525127"
+>> node server.js

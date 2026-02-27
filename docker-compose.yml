@@ -1,0 +1,27 @@
+services:
+  api:
+    build: ./server
+    ports:
+      - "3001:3001"
+    environment:
+      - PORT=3001
+      - SPOTIFY_CLIENT_ID=${SPOTIFY_CLIENT_ID}
+      - SPOTIFY_CLIENT_SECRET=${SPOTIFY_CLIENT_SECRET}
+      - SPOTIFY_REDIRECT_URI=http://127.0.0.1:3001/auth/callback
+      - SCHEDULE_PATH=/app/schedule.json
+      - TOKENS_PATH=/app/tokens.json
+      - TZ=America/Sao_Paulo
+      - SCHEDULE_TZ=America/Sao_Paulo
+      - CORS_ORIGIN=http://localhost:5173
+    volumes:
+      - ./server/schedule.json:/app/schedule.json:ro
+      - ./server/tokens.json:/app/tokens.json
+    restart: unless-stopped
+
+  web:
+    build: .
+    ports:
+      - "5173:80"
+    depends_on:
+      - api
+    restart: unless-stopped
