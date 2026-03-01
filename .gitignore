@@ -21,13 +21,8 @@ coverage
 .env.*
 !.env.example
 
-# Tokens e arquivos sensíveis do servidor
+server/.env
 server/tokens.json
-
-# Se o schedule for local da sua máquina, deixe ignorado.
-# Se ele fizer parte do projeto e precisar subir, REMOVA a linha abaixo.
-server/schedule.json
-
 # Editor / sistema
 .vscode/*
 !.vscode/extensions.json

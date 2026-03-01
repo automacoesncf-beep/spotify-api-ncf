@@ -1,0 +1,91 @@
+{
+  "deviceId": "738fa1d32e7db5fb157fa419cf10ce625a7c789b",
+  "playlistUri": "spotify:playlist:5Cb5yEz7tYISYUxKxs6vBh",
+  "bomDiaContextUri": "spotify:playlist:6fcEuTlxa1SvpxLzH48Ks2",
+  "bomDiaDurationMs": 90000,
+  "bomDiaTimes": [
+    "08:15",
+    "08:30",
+    "08:50",
+    "09:15",
+    "09:30",
+    "09:50",
+    "10:15",
+    "10:30",
+    "10:50",
+    "11:15",
+    "11:30",
+    "11:50"
+  ],
+  "items": [
+    {
+      "id": "9f93e779-f518-475c-8510-2bdf1c293ca2",
+      "cron": "43 16 * * *",
+      "uri": "https://open.spotify.com/playlist/4074QyjJLpo6tdeQXJhUp3?si=1954d4b6de5c4abc",
+      "title": "TESTE LOCAL",
+      "enabled": true,
+      "shuffle": true,
+      "startFromBeginning": false
+    },
+    {
+      "id": "b1ee2ad7-918c-4626-b247-fd44a54c444a",
+      "cron": "40 16 * * *",
+      "uri": "spotify:playlist:6fcEuTlxa1SvpxLzH48Ks2",
+      "title": "ROCK",
+      "enabled": true,
+      "kind": "playlist",
+      "imageUrl": "https://mosaic.scdn.co/640/ab67616d00001e0221ebf49b3292c3f0f575f0f5ab67616d00001e0243058ea096fa35ac33c43587ab67616d00001e0249e6168f69625252689c2526ab67616d00001e027a231174875d7930de9dad58",
+      "subtitle": "por Edrz",
+      "shuffle": true,
+      "startFromBeginning": false
+    },
+    {
+      "id": "d0d2d026-bf4d-49da-8392-b68fdf1d68b6",
+      "cron": "41 16 * * *",
+      "uri": "spotify:playlist:5Cb5yEz7tYISYUxKxs6vBh",
+      "title": "ELETRONICA",
+      "enabled": true,
+      "kind": "playlist",
+      "imageUrl": "https://mosaic.scdn.co/640/ab67616d00001e021813115ff10c5f5ae028321dab67616d00001e021dc7483a9fcfce54822a2f19ab67616d00001e029efc623f9c64c8efb583b186ab67616d00001e02e6082141bd7c86ae9f11ea26",
+      "subtitle": "por Edrz",
+      "shuffle": true,
+      "startFromBeginning": false
+    },
+    {
+      "id": "b1547586-38f6-409a-82bf-e49649aa39cc",
+      "cron": "42 16 * * *",
+      "uri": "spotify:playlist:4074QyjJLpo6tdeQXJhUp3",
+      "title": "ALEATORIA",
+      "enabled": true,
+      "kind": "playlist",
+      "imageUrl": "https://mosaic.scdn.co/640/ab67616d00001e020fbc201add7acc724b32d62fab67616d00001e029ad54bd48992a54be0872120ab67616d00001e02a83a2f295033bb468401e441ab67616d00001e02f632f3a092051c741f912214",
+      "subtitle": "por Edrz",
+      "shuffle": true,
+      "startFromBeginning": false
+    },
+    {
+      "id": "90e4765d-1b25-4196-8c51-cb7f5000762f",
+      "cron": "44 16 * * *",
+      "uri": "spotify:track:67awxiNHNyjMXhVgsHuIrs",
+      "title": "Turn Down for What",
+      "enabled": true,
+      "kind": "track",
+      "imageUrl": "https://i.scdn.co/image/ab67616d0000b273d905e78cad304de028db39b7",
+      "subtitle": "DJ Snake, Lil Jon • Turn Down for What",
+      "shuffle": false,
+      "startFromBeginning": true
+    },
+    {
+      "id": "e0b3462f-bffd-48d9-a0c2-7b99572be695",
+      "cron": "47 16 * * *",
+      "uri": "spotify:playlist:6fcEuTlxa1SvpxLzH48Ks2",
+      "title": "TESTE1",
+      "enabled": true,
+      "kind": "playlist",
+      "imageUrl": "https://mosaic.scdn.co/640/ab67616d00001e0221ebf49b3292c3f0f575f0f5ab67616d00001e0243058ea096fa35ac33c43587ab67616d00001e0249e6168f69625252689c2526ab67616d00001e027a231174875d7930de9dad58",
+      "subtitle": "por Edrz",
+      "shuffle": true,
+      "startFromBeginning": false
+    }
+  ]
+}
