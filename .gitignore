@@ -22,7 +22,9 @@ coverage
 !.env.example
 
 server/.env
+
 server/tokens.json
+
 # Editor / sistema
 .vscode/*
 !.vscode/extensions.json
