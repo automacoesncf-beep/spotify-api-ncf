@@ -7,12 +7,28 @@ yarn-error.log*
 pnpm-debug.log*
 lerna-debug.log*
 
+# Dependências e build
 node_modules
 dist
 dist-ssr
+coverage
+
+# Arquivos locais
 *.local
 
-# Editor directories and files
+# Variáveis de ambiente / segredos
+.env
+.env.*
+!.env.example
+
+# Tokens e arquivos sensíveis do servidor
+server/tokens.json
+
+# Se o schedule for local da sua máquina, deixe ignorado.
+# Se ele fizer parte do projeto e precisar subir, REMOVA a linha abaixo.
+server/schedule.json
+
+# Editor / sistema
 .vscode/*
 !.vscode/extensions.json
 .idea
