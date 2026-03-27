@@ -1,4 +1,3 @@
-// src/features/reproduction/pages/Reproduction.tsx
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useLocation } from "react-router-dom";
 import type { SpotifyDevice, SpotifyPlaybackState } from "../api/types";
@@ -29,6 +28,8 @@ type NavState =
       title?: string;
     };
 
+const POLL_MS = 60_000;
+
 function fmtMs(ms?: number | null) {
   const v = Number(ms ?? 0);
   const total = Math.max(0, Math.floor(v / 1000));
@@ -38,54 +39,163 @@ function fmtMs(ms?: number | null) {
 }
 
 export default function Reproduction() {
-  const { state } = useLocation() as { state?: Partial<NavState> };
+  const location = useLocation();
+  const navState = (location.state ?? {}) as Partial<NavState>;
 
-  const playMode = (state?.playMode ?? "context") as "context" | "uris";
-  const contextUri = (state as any)?.contextUri as string | undefined;
-  const uris = (state as any)?.uris as string[] | undefined;
-  const selectedUri = (state as any)?.selectedUri as string | undefined;
-  const selectedTitle = (state as any)?.title as string | undefined;
+  const playMode = (navState.playMode ?? "context") as "context" | "uris";
+  const contextUri = "contextUri" in navState ? navState.contextUri : undefined;
+  const uris = "uris" in navState ? navState.uris : undefined;
+  const selectedUri = navState.selectedUri;
+  const selectedTitle = navState.title;
 
   const [devices, setDevices] = useState<SpotifyDevice[]>([]);
   const [deviceId, setDeviceId] = useState<string>(() => localStorage.getItem("spotify_device_id") ?? "");
   const [playback, setPlayback] = useState<SpotifyPlaybackState | null>(null);
   const [msg, setMsg] = useState<string>("");
+  const [seekValue, setSeekValue] = useState<number>(0);
+  const [isSeeking, setIsSeeking] = useState(false);
 
   const autoPlayed = useRef(false);
+  const mountedRef = useRef(false);
+  const pollingBusyRef = useRef(false);
+  const pollTimerRef = useRef<number | null>(null);
+
+  const lastPlaybackRef = useRef<string>("");
+  const lastDevicesRef = useRef<string>("");
+
+  function clearPollTimer() {
+    if (pollTimerRef.current !== null) {
+      window.clearTimeout(pollTimerRef.current);
+      pollTimerRef.current = null;
+    }
+  }
+
+  function scheduleNextPoll(runPlaybackPoll: () => Promise<void>) {
+    clearPollTimer();
+
+    if (!mountedRef.current) return;
+    if (document.visibilityState !== "visible") return;
+
+    pollTimerRef.current = window.setTimeout(() => {
+      void runPlaybackPoll();
+    }, POLL_MS);
+  }
 
   useEffect(() => {
+    mountedRef.current = true;
+
+    return () => {
+      mountedRef.current = false;
+      clearPollTimer();
+    };
+  }, []);
+
+  useEffect(() => {
+    let mounted = true;
+
     (async () => {
       try {
         const d = await apiGetDevices();
-        setDevices(d.devices ?? []);
+        if (!mounted || !mountedRef.current) return;
 
-        if (!deviceId) {
-          const active = d.devices?.find((x) => x.is_active)?.id;
-          const first = d.devices?.[0]?.id;
-          const chosen = active ?? first ?? "";
-          if (chosen) {
-            setDeviceId(chosen);
-            localStorage.setItem("spotify_device_id", chosen);
-          }
+        const list = (d.devices ?? []).filter((x) => !!x?.id);
+        const nextDevicesSnapshot = JSON.stringify(list);
+
+        if (nextDevicesSnapshot !== lastDevicesRef.current) {
+          lastDevicesRef.current = nextDevicesSnapshot;
+          setDevices(list);
+        }
+
+        const saved = localStorage.getItem("spotify_device_id") ?? "";
+        const savedExists = !!saved && list.some((x) => x.id === saved);
+
+        if (savedExists) {
+          setDeviceId((prev) => prev || saved);
+          return;
+        }
+
+        const active = list.find((x) => x.is_active)?.id ?? "";
+        const first = list[0]?.id ?? "";
+        const chosen = active || first || "";
+
+        if (chosen) {
+          setDeviceId(chosen);
+          localStorage.setItem("spotify_device_id", chosen);
+        } else if (d.message) {
+          setMsg(d.message);
         }
       } catch (e) {
         console.log(e);
-        setMsg("Não consegui listar devices. Abra o Spotify no PC/celular e dê play 1x.");
+        if (!mounted || !mountedRef.current) return;
+        setMsg("Não consegui listar devices agora.");
       }
     })();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+
+    return () => {
+      mounted = false;
+    };
   }, []);
 
   useEffect(() => {
-    const tick = async () => {
-      const s = await apiGetPlaybackState().catch(() => null);
-      setPlayback(s ?? null);
+    const runPlaybackPoll = async () => {
+      if (!mountedRef.current) return;
+      if (document.visibilityState !== "visible") return;
+      if (pollingBusyRef.current) return;
+
+      pollingBusyRef.current = true;
+
+      try {
+        const data = await apiGetPlaybackState();
+        if (!mountedRef.current) return;
+
+        const nextPlayback = data?.hasActivePlayback && data?.player ? data.player : null;
+        const snapshot = JSON.stringify(nextPlayback ?? null);
+
+        if (snapshot !== lastPlaybackRef.current) {
+          lastPlaybackRef.current = snapshot;
+          setPlayback(nextPlayback);
+        }
+
+        if (!isSeeking) {
+          setSeekValue(nextPlayback?.progress_ms ?? 0);
+        }
+
+        if (data?.message && !data?.hasActivePlayback) {
+          setMsg(data.message || "");
+        } else {
+          setMsg("");
+        }
+      } catch (err) {
+        console.error("Erro ao buscar state:", err);
+        if (mountedRef.current) {
+          setPlayback(null);
+          setMsg("Falha ao buscar estado do player.");
+        }
+      } finally {
+        pollingBusyRef.current = false;
+        scheduleNextPoll(runPlaybackPoll);
+      }
     };
 
-    tick();
-    const id = setInterval(tick, 1000);
-    return () => clearInterval(id);
-  }, []);
+    const handleVisibilityChange = () => {
+      if (!mountedRef.current) return;
+
+      if (document.visibilityState === "visible") {
+        clearPollTimer();
+        void runPlaybackPoll();
+      } else {
+        clearPollTimer();
+      }
+    };
+
+    void runPlaybackPoll();
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+
+    return () => {
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+      clearPollTimer();
+    };
+  }, [isSeeking]);
 
   const isPlayingNow = !!playback?.is_playing;
 
@@ -93,11 +203,45 @@ export default function Reproduction() {
     if (!selectedUri) return false;
     if (!playback?.is_playing) return false;
 
-    if (playMode === "uris") return playback?.item?.uri === selectedUri;
+    if (playMode === "uris") {
+      return playback?.item?.uri === selectedUri;
+    }
 
-    const ctx = (playback as any)?.context?.uri;
-    return ctx === selectedUri;
-  }, [playback, playMode, selectedUri]);
+    const ctx = playback?.context?.uri;
+    return ctx === selectedUri || ctx === contextUri;
+  }, [playback, playMode, selectedUri, contextUri]);
+
+  async function refreshPlaybackOnce() {
+    if (pollingBusyRef.current) return;
+
+    clearPollTimer();
+    pollingBusyRef.current = true;
+
+    try {
+      const latest = await apiGetPlaybackState();
+      if (!mountedRef.current) return;
+
+      const nextPlayback = latest?.hasActivePlayback && latest?.player ? latest.player : null;
+      const snapshot = JSON.stringify(nextPlayback ?? null);
+
+      if (snapshot !== lastPlaybackRef.current) {
+        lastPlaybackRef.current = snapshot;
+        setPlayback(nextPlayback);
+      }
+
+      setSeekValue(nextPlayback?.progress_ms ?? 0);
+
+      if (latest?.message && !latest?.hasActivePlayback) {
+        setMsg(latest.message || "");
+      } else {
+        setMsg("");
+      }
+    } catch (e) {
+      console.log(e);
+    } finally {
+      pollingBusyRef.current = false;
+    }
+  }
 
   async function playSelected() {
     if (!deviceId) {
@@ -119,10 +263,12 @@ export default function Reproduction() {
         }
         await apiPlayUris(deviceId, uris);
       }
+
       setMsg(`Tocando: ${selectedTitle ?? "selecionado"}`);
+      await refreshPlaybackOnce();
     } catch (e) {
       console.log(e);
-      setMsg("Falha ao tocar. Confirme se o device está ativo (Spotify aberto e tocando).");
+      setMsg("Falha ao tocar. Confirme se o device está acessível no Spotify Connect.");
       autoPlayed.current = false;
     }
   }
@@ -131,13 +277,15 @@ export default function Reproduction() {
     if (!deviceId) return;
     if (autoPlayed.current) return;
 
-    const hasSelection = (playMode === "context" && !!contextUri) || (playMode === "uris" && !!uris?.length);
+    const hasSelection =
+      (playMode === "context" && !!contextUri) ||
+      (playMode === "uris" && !!uris?.length);
+
     if (!hasSelection) return;
 
     autoPlayed.current = true;
-    playSelected();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [deviceId]);
+    void playSelected();
+  }, [deviceId, playMode, contextUri, uris]);
 
   const duration = playback?.item?.duration_ms ?? 0;
   const progress = playback?.progress_ms ?? 0;
@@ -151,19 +299,27 @@ export default function Reproduction() {
     playback?.item?.album?.images?.[2]?.url ??
     "";
 
-  const activeDeviceName = playback?.device?.name ?? devices.find((d) => d.id === deviceId)?.name ?? "";
-  const activeDeviceType = playback?.device?.type ?? devices.find((d) => d.id === deviceId)?.type ?? "";
+  const activeDeviceName =
+    playback?.device?.name ??
+    devices.find((d) => d.id === deviceId)?.name ??
+    "";
+
+  const activeDeviceType =
+    playback?.device?.type ??
+    devices.find((d) => d.id === deviceId)?.type ??
+    "";
 
   return (
     <div className="min-h-screen bg-zinc-100 p-6">
       <div className="mx-auto max-w-5xl">
-        <div className="rounded-3xl border border-zinc-200 bg-white shadow-sm overflow-hidden">
-          {/* Header */}
-          <div className="flex items-center justify-between gap-3 px-6 py-4 border-b border-zinc-200">
+        <div className="overflow-hidden rounded-3xl border border-zinc-200 bg-white shadow-sm">
+          <div className="flex items-center justify-between gap-3 border-b border-zinc-200 px-6 py-4">
             <div>
               <h1 className="text-lg font-semibold text-zinc-900">Player</h1>
               <p className="text-sm text-zinc-600">
-                {activeDeviceName ? `Device: ${activeDeviceName} (${activeDeviceType})` : "Selecione um device para tocar"}
+                {activeDeviceName
+                  ? `Device: ${activeDeviceName} (${activeDeviceType})`
+                  : "Selecione um device para tocar"}
               </p>
             </div>
 
@@ -190,24 +346,24 @@ export default function Reproduction() {
                 className="rounded-xl border border-zinc-200 bg-white px-3 py-2 text-sm"
               >
                 <option value="">Selecione um device...</option>
-                {devices.map((d) => (
-                  <option key={d.id} value={d.id}>
-                    {d.name} ({d.type}) {d.is_active ? "• ativo" : ""}
-                  </option>
-                ))}
+                {devices
+                  .filter((d) => !!d.id)
+                  .map((d) => (
+                    <option key={String(d.id)} value={String(d.id)}>
+                      {d.name} ({d.type}) {d.is_active ? "• ativo" : ""}
+                    </option>
+                  ))}
               </select>
             </div>
           </div>
 
-          {/* Body */}
-          <div className="grid grid-cols-1 md:grid-cols-[320px_1fr] gap-6 p-6">
-            {/* Cover */}
+          <div className="grid grid-cols-1 gap-6 p-6 md:grid-cols-[320px_1fr]">
             <div className="flex flex-col items-center">
-              <div className="relative w-full max-w-[320px] aspect-square rounded-3xl overflow-hidden bg-zinc-200 shadow-sm">
+              <div className="relative aspect-square w-full max-w-[320px] overflow-hidden rounded-3xl bg-zinc-200 shadow-sm">
                 {cover ? (
                   <img src={cover} alt="Capa" className="h-full w-full object-cover" />
                 ) : (
-                  <div className="h-full w-full flex items-center justify-center text-zinc-500 text-sm">
+                  <div className="flex h-full w-full items-center justify-center text-sm text-zinc-500">
                     Sem capa (nada tocando)
                   </div>
                 )}
@@ -225,7 +381,7 @@ export default function Reproduction() {
                   </span>
 
                   {selectedTitle ? (
-                    <span className="text-xs text-zinc-500 truncate max-w-[180px]">
+                    <span className="max-w-[180px] truncate text-xs text-zinc-500">
                       Selecionado: {selectedTitle}
                     </span>
                   ) : null}
@@ -233,67 +389,112 @@ export default function Reproduction() {
               </div>
             </div>
 
-            {/* Info + Controls */}
             <div className="flex flex-col">
               <div>
-                <h2 className="text-2xl font-bold text-zinc-900 leading-tight">
+                <h2 className="text-2xl font-bold leading-tight text-zinc-900">
                   {trackName || "Nada tocando"}
                 </h2>
                 <p className="mt-1 text-sm text-zinc-600">{artistName || "—"}</p>
                 <p className="mt-1 text-sm text-zinc-500">{albumName || ""}</p>
               </div>
 
-              {/* Progress */}
               <div className="mt-6">
                 <input
                   type="range"
                   min={0}
                   max={duration}
-                  value={progress}
-                  onChange={(e) => deviceId && apiSeek(deviceId, Number(e.target.value))}
+                  value={Math.min(isSeeking ? seekValue : progress, duration || 0)}
+                  onChange={(e) => {
+                    setIsSeeking(true);
+                    setSeekValue(Number(e.target.value));
+                  }}
+                  onMouseUp={async () => {
+                    if (!deviceId || !duration) {
+                      setIsSeeking(false);
+                      return;
+                    }
+
+                    try {
+                      await apiSeek(deviceId, seekValue);
+                      await refreshPlaybackOnce();
+                    } catch (e) {
+                      console.log(e);
+                    } finally {
+                      setIsSeeking(false);
+                    }
+                  }}
+                  onTouchEnd={async () => {
+                    if (!deviceId || !duration) {
+                      setIsSeeking(false);
+                      return;
+                    }
+
+                    try {
+                      await apiSeek(deviceId, seekValue);
+                      await refreshPlaybackOnce();
+                    } catch (e) {
+                      console.log(e);
+                    } finally {
+                      setIsSeeking(false);
+                    }
+                  }}
                   className="w-full"
                   disabled={!deviceId || !duration}
                 />
                 <div className="mt-1 flex items-center justify-between text-xs text-zinc-600">
-                  <span>{fmtMs(progress)}</span>
+                  <span>{fmtMs(isSeeking ? seekValue : progress)}</span>
                   <span>{fmtMs(duration)}</span>
                 </div>
               </div>
 
-              {/* Buttons */}
               <div className="mt-6 flex flex-wrap items-center gap-2">
                 <button
                   className="rounded-xl border px-4 py-2 text-sm font-semibold hover:bg-zinc-50 disabled:opacity-60"
-                  onClick={() => deviceId && apiPrevious(deviceId)}
+                  onClick={async () => {
+                    if (!deviceId) return;
+                    await apiPrevious(deviceId).catch(console.log);
+                    await refreshPlaybackOnce();
+                  }}
                   disabled={!deviceId}
                 >
                   ⏮ Prev
                 </button>
 
-                {/* Play/Pause agora */}
                 <button
                   className={[
                     "rounded-2xl px-5 py-2 text-sm font-semibold transition disabled:opacity-60",
-                    isPlayingNow ? "bg-zinc-900 text-white hover:bg-zinc-800" : "bg-white border border-zinc-300 text-zinc-900 hover:bg-zinc-50",
+                    isPlayingNow
+                      ? "bg-zinc-900 text-white hover:bg-zinc-800"
+                      : "border border-zinc-300 bg-white text-zinc-900 hover:bg-zinc-50",
                   ].join(" ")}
-                  onClick={() => {
+                  onClick={async () => {
                     if (!deviceId) return;
-                    return isPlayingNow ? apiPause(deviceId) : apiResume(deviceId);
+
+                    try {
+                      if (isPlayingNow) {
+                        await apiPause(deviceId);
+                      } else {
+                        await apiResume(deviceId);
+                      }
+
+                      await refreshPlaybackOnce();
+                    } catch (e) {
+                      console.log(e);
+                    }
                   }}
                   disabled={!deviceId}
                 >
                   {isPlayingNow ? "⏸ Pause (Agora)" : "▶ Play (Agora)"}
                 </button>
 
-                {/* Play selecionado */}
                 <button
                   className={[
                     "rounded-2xl px-5 py-2 text-sm font-semibold transition disabled:opacity-60",
                     isSelectedPlaying
-                      ? "bg-emerald-600 text-white cursor-not-allowed"
+                      ? "cursor-not-allowed bg-emerald-600 text-white"
                       : "bg-indigo-600 text-white hover:bg-indigo-700",
                   ].join(" ")}
-                  onClick={playSelected}
+                  onClick={() => void playSelected()}
                   disabled={!deviceId || isSelectedPlaying}
                 >
                   {isSelectedPlaying ? "✅ Selecionado tocando" : "▶ Play selecionado"}
@@ -301,7 +502,11 @@ export default function Reproduction() {
 
                 <button
                   className="rounded-xl border px-4 py-2 text-sm font-semibold hover:bg-zinc-50 disabled:opacity-60"
-                  onClick={() => deviceId && apiNext(deviceId)}
+                  onClick={async () => {
+                    if (!deviceId) return;
+                    await apiNext(deviceId).catch(console.log);
+                    await refreshPlaybackOnce();
+                  }}
                   disabled={!deviceId}
                 >
                   Next ⏭
@@ -315,7 +520,7 @@ export default function Reproduction() {
               ) : null}
 
               <div className="mt-6 text-xs text-zinc-500">
-                Dica: se não aparecer device, abra o Spotify no PC/celular e dê play 1x.
+                Dica: se não aparecer device, deixe o Spotify realmente acessível no Spotify Connect.
               </div>
             </div>
           </div>

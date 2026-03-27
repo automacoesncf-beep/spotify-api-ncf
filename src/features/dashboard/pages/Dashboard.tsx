@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 
 type PlaybackState = {
@@ -15,10 +15,19 @@ type PlaybackState = {
   context?: { uri?: string } | null;
 };
 
+type PlayerStateResponse = {
+  ok: true;
+  hasActivePlayback: boolean;
+  player: PlaybackState | null;
+  timedOut?: boolean;
+  message?: string | null;
+  error?: string | null;
+};
+
 type ScheduleItem = {
   id: string;
-  cron: string; // "mm hh * * *"
-  uri: string;  // spotify:... ou URL (se você habilitou no backend)
+  cron: string;
+  uri: string;
   title?: string;
   enabled?: boolean;
   shuffle?: boolean;
@@ -29,11 +38,15 @@ type ScheduleItem = {
 
 type AuthStatus = {
   hasRefreshToken: boolean;
+  hasAccessTokenOnDisk?: boolean;
+  expires_in_sec_left?: number | null;
   updated_at: string | null;
   scope: string | null;
 };
 
 const API_BASE = String((import.meta as any).env?.VITE_API_BASE ?? "").replace(/\/$/, "");
+const ONE_MINUTE = 60000;
+
 function buildUrl(path: string) {
   const p = path.startsWith("/") ? path : `/${path}`;
   return API_BASE ? `${API_BASE}${p}` : p;
@@ -42,13 +55,18 @@ function buildUrl(path: string) {
 async function getJson<T>(path: string): Promise<T> {
   const res = await fetch(buildUrl(path));
   const text = await res.text();
+
   let data: any = null;
   try {
     data = text ? JSON.parse(text) : null;
   } catch {
     data = text;
   }
-  if (!res.ok) throw new Error(typeof data === "string" ? data : JSON.stringify(data));
+
+  if (!res.ok) {
+    throw new Error(typeof data === "string" ? data : JSON.stringify(data));
+  }
+
   return data as T;
 }
 
@@ -67,7 +85,6 @@ function cronToTime(cron: string) {
   return `${String(hour).padStart(2, "0")}:${String(min).padStart(2, "0")}`;
 }
 
-// Próxima execução (assumindo cron diário: "mm hh * * *")
 function nextRunFromCron(cron: string) {
   const parts = String(cron ?? "").trim().split(/\s+/);
   const mm = Number(parts[0] ?? 0);
@@ -82,6 +99,7 @@ function nextRunFromCron(cron: string) {
   if (next.getTime() <= now.getTime()) {
     next.setDate(next.getDate() + 1);
   }
+
   return next;
 }
 
@@ -90,11 +108,10 @@ function asComparableUri(v: string) {
   if (!s) return "";
   if (s.startsWith("spotify:")) return s;
 
-  // aceita URL open.spotify.com/... e converte pra spotify:type:id
   if (s.includes("open.spotify.com/")) {
     try {
       const url = new URL(s);
-      const parts = url.pathname.split("/").filter(Boolean); // ["playlist","id"]
+      const parts = url.pathname.split("/").filter(Boolean);
       const type = parts[0];
       const id = parts[1];
       if (!type || !id) return s;
@@ -113,47 +130,94 @@ function asComparableUri(v: string) {
 
 export default function Dashboard() {
   const [playback, setPlayback] = useState<PlaybackState | null>(null);
+  const [hasActivePlayback, setHasActivePlayback] = useState(false);
   const [schedule, setSchedule] = useState<ScheduleItem[]>([]);
   const [auth, setAuth] = useState<AuthStatus | null>(null);
   const [healthOk, setHealthOk] = useState<boolean>(false);
   const [msg, setMsg] = useState("");
 
-  // Playback (rápido)
-  useEffect(() => {
-    const tick = async () => {
-      const s = await getJson<PlaybackState | null>("/api/player/state").catch(() => null);
-      setPlayback(s ?? null);
-    };
-    tick();
-    const id = setInterval(tick, 2000);
-    return () => clearInterval(id);
-  }, []);
+  const playbackLoadingRef = useRef(false);
+  const statusLoadingRef = useRef(false);
 
-  // Schedule + status (menos frequente)
   useEffect(() => {
-    const tick = async () => {
+    let active = true;
+
+    const tickPlayback = async () => {
+      if (playbackLoadingRef.current) return;
+      playbackLoadingRef.current = true;
+
       try {
-        setMsg("");
-        const h = await getJson<{ ok: true }>("/health");
-        setHealthOk(!!h?.ok);
+        const data = await getJson<PlayerStateResponse>("/api/player/state");
+        if (!active) return;
 
-        const a = await getJson<AuthStatus>("/api/auth/status");
-        setAuth(a);
+        setHasActivePlayback(!!data?.hasActivePlayback);
+        setPlayback(data?.player ?? null);
 
-        const s = await getJson<{ ok: true; items: ScheduleItem[] }>("/api/schedule");
-        setSchedule(s.items ?? []);
+        if (data?.timedOut) {
+          setMsg(data?.message ?? "O player demorou para responder.");
+        } else if (data?.message && !data?.hasActivePlayback) {
+          setMsg(data.message);
+        } else {
+          setMsg("");
+        }
       } catch (e: any) {
-        console.log(e);
-        setMsg(e?.message ?? "Falha ao carregar status.");
+        if (!active) return;
+        setHasActivePlayback(false);
+        setPlayback(null);
+        setMsg(e?.message ?? "Falha ao buscar estado do player.");
+      } finally {
+        playbackLoadingRef.current = false;
       }
     };
 
-    tick();
-    const id = setInterval(tick, 10000);
-    return () => clearInterval(id);
+    void tickPlayback();
+    const id = setInterval(tickPlayback, ONE_MINUTE);
+
+    return () => {
+      active = false;
+      clearInterval(id);
+    };
   }, []);
 
-  const nowPlaying = playback?.item;
+  useEffect(() => {
+    let active = true;
+
+    const tickStatus = async () => {
+      if (statusLoadingRef.current) return;
+      statusLoadingRef.current = true;
+
+      try {
+        const [h, a, s] = await Promise.all([
+          getJson<{ ok: true }>("/health"),
+          getJson<AuthStatus>("/api/auth/status"),
+          getJson<{ ok: true; items: ScheduleItem[] }>("/api/schedule"),
+        ]);
+
+        if (!active) return;
+
+        setHealthOk(!!h?.ok);
+        setAuth(a);
+        setSchedule(s.items ?? []);
+      } catch (e: any) {
+        if (active) {
+          setMsg((prev) => prev || e?.message || "Falha ao carregar status.");
+        }
+      } finally {
+        statusLoadingRef.current = false;
+      }
+    };
+
+    void tickStatus();
+    const id = setInterval(tickStatus, ONE_MINUTE);
+
+    return () => {
+      active = false;
+      clearInterval(id);
+    };
+  }, []);
+
+  const nowPlaying = playback?.item ?? null;
+
   const cover =
     nowPlaying?.album?.images?.[0]?.url ??
     nowPlaying?.album?.images?.[1]?.url ??
@@ -169,22 +233,19 @@ export default function Dashboard() {
   const activeSchedule = schedule.filter((x) => (x.enabled ?? true) !== false).length;
 
   const nextItems = useMemo(() => {
-    const list = schedule
+    return schedule
       .filter((x) => (x.enabled ?? true) !== false)
       .map((x) => ({ item: x, next: nextRunFromCron(x.cron) }))
       .sort((a, b) => a.next.getTime() - b.next.getTime())
       .slice(0, 6);
-
-    return list;
   }, [schedule]);
 
-  const playingContext = asComparableUri((playback as any)?.context?.uri ?? "");
+  const playingContext = asComparableUri(playback?.context?.uri ?? "");
   const playingTrack = asComparableUri(nowPlaying?.uri ?? "");
 
   return (
     <section className="min-h-screen bg-zinc-100">
       <div className="mx-auto max-w-6xl p-6 space-y-4">
-        {/* Header */}
         <div className="flex items-center justify-between flex-wrap gap-3">
           <div>
             <h1 className="text-2xl font-bold text-zinc-900">Spotify Scheduler</h1>
@@ -200,12 +261,14 @@ export default function Dashboard() {
             >
               Buscar
             </Link>
+
             <Link
               to="/reproduction"
               className="rounded-xl bg-zinc-900 px-4 py-2 text-sm font-semibold text-white hover:bg-zinc-800"
             >
               Abrir Player
             </Link>
+
             <Link
               to="/schadule"
               className="rounded-xl bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-700"
@@ -221,9 +284,7 @@ export default function Dashboard() {
           </div>
         ) : null}
 
-        {/* Top cards */}
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-          {/* Status */}
           <div className="rounded-2xl border border-zinc-200 bg-white p-4 shadow-sm">
             <h3 className="text-sm font-semibold text-zinc-900">Status do sistema</h3>
 
@@ -239,6 +300,13 @@ export default function Dashboard() {
                 <span className="text-zinc-600">Spotify</span>
                 <span className={(auth?.hasRefreshToken ? "text-emerald-700" : "text-rose-700") + " font-semibold"}>
                   {auth?.hasRefreshToken ? "Conectado" : "Desconectado"}
+                </span>
+              </div>
+
+              <div className="flex items-center justify-between">
+                <span className="text-zinc-600">Player</span>
+                <span className={(hasActivePlayback ? "text-emerald-700" : "text-zinc-600") + " font-semibold"}>
+                  {hasActivePlayback ? "Ativo" : "Sem reprodução"}
                 </span>
               </div>
 
@@ -260,20 +328,28 @@ export default function Dashboard() {
             ) : null}
           </div>
 
-          {/* Now playing */}
           <div className="rounded-2xl border border-zinc-200 bg-white p-4 shadow-sm md:col-span-2">
             <h3 className="text-sm font-semibold text-zinc-900">Tocando agora</h3>
 
             <div className="mt-3 flex gap-4">
-              <div className="h-24 w-24 rounded-2xl bg-zinc-200 overflow-hidden shrink-0">
-                {cover ? <img src={cover} alt="capa" className="h-24 w-24 object-cover" /> : null}
+              <div className="h-24 w-24 rounded-2xl bg-zinc-200 overflow-hidden shrink-0 flex items-center justify-center">
+                {cover ? (
+                  <img src={cover} alt="capa" className="h-24 w-24 object-cover" />
+                ) : (
+                  <span className="text-xs text-zinc-500">Sem capa</span>
+                )}
               </div>
 
               <div className="min-w-0 flex-1">
                 <div className="flex items-center gap-2">
-                  <span className={`inline-flex rounded-full px-3 py-1 text-xs font-semibold ${isPlaying ? "bg-emerald-100 text-emerald-700" : "bg-zinc-100 text-zinc-700"}`}>
+                  <span
+                    className={`inline-flex rounded-full px-3 py-1 text-xs font-semibold ${
+                      isPlaying ? "bg-emerald-100 text-emerald-700" : "bg-zinc-100 text-zinc-700"
+                    }`}
+                  >
                     {isPlaying ? "Tocando" : "Pausado"}
                   </span>
+
                   <span className="text-xs text-zinc-500">
                     {playback?.device?.name ? `Device: ${playback.device.name}` : ""}
                   </span>
@@ -282,17 +358,20 @@ export default function Dashboard() {
                 <h2 className="mt-2 text-lg font-bold text-zinc-900 truncate">
                   {nowPlaying?.name ?? "Nada tocando"}
                 </h2>
+
                 <p className="text-sm text-zinc-600 truncate">{artists || "—"}</p>
                 <p className="text-xs text-zinc-500 truncate">{nowPlaying?.album?.name ?? ""}</p>
 
-                {/* Progress */}
                 <div className="mt-3">
                   <div className="h-2 w-full rounded-full bg-zinc-200 overflow-hidden">
                     <div
                       className="h-2 bg-zinc-900"
-                      style={{ width: duration ? `${Math.min(100, (progress / duration) * 100)}%` : "0%" }}
+                      style={{
+                        width: duration ? `${Math.min(100, (progress / duration) * 100)}%` : "0%",
+                      }}
                     />
                   </div>
+
                   <div className="mt-1 flex justify-between text-xs text-zinc-600">
                     <span>{fmtMs(progress)}</span>
                     <span>{fmtMs(duration)}</span>
@@ -303,7 +382,6 @@ export default function Dashboard() {
           </div>
         </div>
 
-        {/* Agenda preview */}
         <div className="rounded-2xl border border-zinc-200 bg-white p-4 shadow-sm">
           <div className="flex items-center justify-between">
             <h3 className="text-sm font-semibold text-zinc-900">Próximos agendamentos</h3>
@@ -320,8 +398,12 @@ export default function Dashboard() {
 
                 return (
                   <div key={item.id} className="rounded-2xl border border-zinc-200 p-3 flex gap-3">
-                    <div className="w-12 h-12 rounded-xl bg-zinc-200 overflow-hidden shrink-0">
-                      {item.imageUrl ? <img src={item.imageUrl} alt="capa" className="w-12 h-12 object-cover" /> : null}
+                    <div className="w-12 h-12 rounded-xl bg-zinc-200 overflow-hidden shrink-0 flex items-center justify-center">
+                      {item.imageUrl ? (
+                        <img src={item.imageUrl} alt="capa" className="w-12 h-12 object-cover" />
+                      ) : (
+                        <span className="text-[10px] text-zinc-500">sem capa</span>
+                      )}
                     </div>
 
                     <div className="min-w-0 flex-1">
@@ -329,6 +411,7 @@ export default function Dashboard() {
                         <div className="font-semibold text-zinc-900 truncate">
                           {item.title ?? "Sem título"}
                         </div>
+
                         {isThisPlaying ? (
                           <span className="text-xs font-semibold rounded-full bg-emerald-100 text-emerald-700 px-2 py-1">
                             Tocando
@@ -340,8 +423,10 @@ export default function Dashboard() {
                         {item.subtitle ?? item.uri}
                       </div>
 
-                      <div className="mt-1 text-xs text-zinc-500 flex gap-3">
-                        <span>Próximo: {next.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</span>
+                      <div className="mt-1 text-xs text-zinc-500 flex gap-3 flex-wrap">
+                        <span>
+                          Próximo: {next.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+                        </span>
                         <span>cron: {cronToTime(item.cron)}</span>
                         <span>{item.shuffle ? "aleatório" : "ordem"}</span>
                       </div>

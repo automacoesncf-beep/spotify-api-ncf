@@ -1,0 +1,32 @@
+{
+  "devices": {
+    "7d231227b0ab70ec50bca0b42465013c051ad6b2": {
+      "cursors": {
+        "spotify:playlist:1J8UQpcAtbgwlqv5sCLFdg": {
+          "device_id": "7d231227b0ab70ec50bca0b42465013c051ad6b2",
+          "context_uri": "spotify:playlist:1J8UQpcAtbgwlqv5sCLFdg",
+          "item_uri": "spotify:track:6h5PAsRni4IRlxWr6uDPTP",
+          "progress_ms": 114242,
+          "item_duration_ms": 203000,
+          "shuffle_state": true,
+          "repeat_state": "context",
+          "is_playing": true,
+          "currently_playing_type": "track",
+          "captured_at": "2026-03-27T14:00:00.742Z"
+        }
+      },
+      "last": {
+        "device_id": "7d231227b0ab70ec50bca0b42465013c051ad6b2",
+        "context_uri": "spotify:playlist:1J8UQpcAtbgwlqv5sCLFdg",
+        "item_uri": "spotify:track:6h5PAsRni4IRlxWr6uDPTP",
+        "progress_ms": 114242,
+        "item_duration_ms": 203000,
+        "shuffle_state": true,
+        "repeat_state": "context",
+        "is_playing": true,
+        "currently_playing_type": "track",
+        "captured_at": "2026-03-27T14:00:00.742Z"
+      }
+    }
+  }
+}

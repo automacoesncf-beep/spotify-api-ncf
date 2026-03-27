@@ -31,3 +31,20 @@ cd C:\Users\ederz\Desktop\SPOTIFY\spotify-api-ncf\spotify-token
 >> $env:SPOTIFY_CLIENT_ID="15ac21bfd8844362a70cb1c18c006817"
 >> $env:SPOTIFY_CLIENT_SECRET="0c35325e43274934a9635c0a7a525127"
 >> node server.js
+
+
+✅ Como validar (sem travar)
+
+Rode o server e abra uma vez:
+http://127.0.0.1:3001/auth/login
+
+Teste:
+
+http://127.0.0.1:3001/api/auth/status
+
+http://127.0.0.1:3001/api/me
+
+http://127.0.0.1:3001/api/player/devices
+
+http://127.0.0.1:3001/api/player/state
+
